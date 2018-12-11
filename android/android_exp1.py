@@ -84,15 +84,12 @@ def getObsVector(state, joints):
     return state
 
 
-def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
+def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=10,
                 episode_length=500, gamma=0.99,
                 start_steps=100, energy_cost_weight=0.0,
                 reward_type="x_dist_max", hidden_size=256, print_to_file=True):
 
-    if print_to_file:
-        f = open("Dec10Exp/" + exp_name + ".txt", 'w')
-        orig_stdout = sys.stdout
-        sys.stdout = f
+    print("Beginning test ", exp_name)
 
     # Hyper parameters
     ppo_epochs = 4
@@ -102,7 +99,7 @@ def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
     render = False
     action_multiplier = 3
 
-    env = holodeck.make('ExampleLevel')
+    env = holodeck.make('ExampleLevel', window_res=[256, 256])
     raw_state, rew, done, _ = env.reset()
     state = getObsVector(raw_state, joints)
 
@@ -115,13 +112,11 @@ def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
     val_losses = []
     policy_losses = []
 
-    loop = tqdm(total=epochs, position=0)
     episode_avg_rewards = []
 
     for e in range(epochs):
 
         experience = []
-        loop.update(1)
         rewards = []
 
         # Create env_samples number of episode rollouts
@@ -185,7 +180,7 @@ def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
         avg_rewards = sum(rewards) / env_samples
         episode_avg_rewards.append(avg_rewards)
         print(" ")
-        print("Epoch: ", e, " Avg Reward: ", avg_rewards)
+        print("Epoch: ", e, "/", epochs, " Avg Reward: ", avg_rewards)
 
         exp_data = ExperienceDataset(experience)
         exp_loader = DataLoader(exp_data, batch_size=batch_size, shuffle=True, pin_memory=True)
@@ -219,16 +214,12 @@ def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
                 policy_losses.append(policy_loss.detach().numpy())
 
         if e % 10 == 0:
-            model_name = 'models/Dec10Exp/' + exp_name + str(e) + '_reward_' + str(int(avg_rewards)) + '.model'
+            model_name = 'Dec10Exp/Exp' + exp_name + str(e) + '_reward_' + str(int(avg_rewards)) + '.model'
             torch.save(model, model_name)
-
-    if print_to_file:
-        sys.stdout = orig_stdout
-        f.close()
 
 
 if __name__ == '__main__':
-    exp = sys.argv[1]
+    exp = int(sys.argv[1])
 
     if exp is 0:
         AndroidTest(exp_name="0-Control")
