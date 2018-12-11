@@ -9,12 +9,12 @@ import numpy as np
 import holodeck
 from holodeck.sensors import *
 import sys
-from copy import copy
+
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.normal_(m.weight, mean=0., std=0.1)
-        nn.init.constant_(m.bias, 0.2)
+        nn.init.constant_(m.bias, 0.0)
 
 
 # Define the Actor Critic
@@ -78,13 +78,15 @@ def compute_returns(rollout, gamma=0.9):
 def getObsVector(state, joints):
     state = np.concatenate((state[Sensors.LOCATION_SENSOR],
                             state[Sensors.ORIENTATION_SENSOR],
+                            state[Sensors.VELOCITY_SENSOR],
+                            state[Sensors.PRESSURE_SENSOR],
                             state[Sensors.RELATIVE_SKELETAL_POSITION_SENSOR],
                             state[Sensors.JOINT_ROTATION_SENSOR][0:joints]),
                            axis=None)
     return state
 
 
-def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=500,
+def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=10,
                 episode_length=500, gamma=0.99,
                 start_steps=100, energy_cost_weight=0.0,
                 reward_type="x_dist_max", hidden_size=256, print_to_file=True):
@@ -127,7 +129,7 @@ def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=500,
             for _ in range(start_steps):
                 env.tick()
 
-            raw_state, rew, done, _ = copy(env.step(np.zeros(94)))
+            raw_state, rew, done, _ = env.step(np.zeros(94))
 
             max_dist = raw_state[Sensors.LOCATION_SENSOR][0]
 
@@ -141,7 +143,7 @@ def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=500,
 
                 action = dist.sample().numpy()[0]
 
-                obs_raw, reward, terminal, _ = copy(env.step(action_multiplier*np.append(action, np.zeros((94-54)))))
+                obs_raw, reward, terminal, _ = env.step(action_multiplier*np.append(action, np.zeros((94-54))))
                 distance = obs_raw[Sensors.LOCATION_SENSOR][0]
 
                 energy_cost = np.mean(np.abs(action)) * energy_cost_weight
@@ -220,27 +222,10 @@ def AndroidTest(exp_name="exp", lr=1e-4, env_samples=20, epochs=500,
 if __name__ == '__main__':
     exp = int(sys.argv[1])
 
-    if exp is 0:
-        AndroidTest(exp_name="0-Control")
-    elif exp is 1:
-        AndroidTest(exp_name="1-Stand", reward_type="z_dist")
-    elif exp is 2:
-        AndroidTest(exp_name="2-HigherLR", lr=5e-4)
-    elif exp is 3:
-        AndroidTest(exp_name="3-LowerLR", lr=5e-5)
-    elif exp is 4:
-        AndroidTest(exp_name="4-MoreSamples", env_samples=50)
-    elif exp is 5:
-        AndroidTest(exp_name="5-LargerHiddenSize", hidden_size=512)
-    elif exp is 6:
-        AndroidTest(exp_name="6-SmallerHiddenSize", hidden_size=128)
-    elif exp is 7:
-        AndroidTest(exp_name="7-SmallEnergyCost", energy_cost_weight=1e-8)
-    elif exp is 8:
-        AndroidTest(exp_name="8-MedEnergyCost", energy_cost_weight=1e-6)
-    elif exp is 9:
-        AndroidTest(exp_name="9-StartStepsZero", start_steps=0)
-    elif exp is 10:
-        AndroidTest(exp_name="10-LowerGamma", gamma=0.9)
-    elif exp is 11:
-        AndroidTest(exp_name="11-JustX_Dist", reward_type="x_dist")
+    """
+        Changes:
+        Added velocity sensor and pressure sensor
+        Set bias initialization to 0
+    
+    
+    """
