@@ -6,12 +6,15 @@ import torch.optim as optim
 from tqdm import tqdm
 from torch.distributions import Normal
 import numpy as np
+import holodeck
+from holodeck.sensors import *
+import sys
 
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.normal_(m.weight, mean=0., std=0.1)
-        nn.init.constant_(m.bias, 1.0)
+        nn.init.constant_(m.bias, 0.2)
 
 
 # Define the Actor Critic
@@ -28,7 +31,9 @@ class ActorCritic(nn.Module):
         )
 
         self.actor = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
+            nn.Linear(input_size, hidden_size*2),
+            nn.ReLU(),
+            nn.Linear(hidden_size*2, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
@@ -70,24 +75,47 @@ def compute_returns(rollout, gamma=0.9):
         rollout[i] = (obs, reward, action_dist, action, ret)
 
 
-def main():
+def getObsVector(state, joints):
+    state = np.concatenate((state[Sensors.LOCATION_SENSOR],
+                            state[Sensors.ORIENTATION_SENSOR],
+                            state[Sensors.RELATIVE_SKELETAL_POSITION_SENSOR],
+                            state[Sensors.JOINT_ROTATION_SENSOR][0:joints]),
+                           axis=None)
+    return state
+
+
+def AndroidTest(exp_name = "exp", lr=1e-4, env_samples=20, epochs=10,
+                episode_length=500, gamma=0.99,
+                start_steps=100, energy_cost_weight=0.0,
+                reward_type="x_dist_max", hidden_size=256, print_to_file=True):
+
+    if print_to_file:
+        f = open("Dec10Exp/" + exp_name + ".txt", 'w')
+        orig_stdout = sys.stdout
+        sys.stdout = f
+
     # Hyper parameters
-    epochs = 30
-    env_samples = 100
-    episode_length = 1000
     ppo_epochs = 4
-    batch_size = 256
+    batch_size = 512
     epsilon = 0.2
-    lr = 1e-3
-    env = gym.make('Pendulum-v0')
-    model = ActorCritic(env.observation_space.shape[0], env.action_space.shape[0], hidden_size=32)
+    joints = 54
+    render = False
+    action_multiplier = 3
+
+    env = holodeck.make('ExampleLevel')
+    raw_state, rew, done, _ = env.reset()
+    state = getObsVector(raw_state, joints)
+
+    input_len = state.shape[0]
+
+    model = ActorCritic(input_len, joints, hidden_size=hidden_size)
 
     val_loss_func = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     val_losses = []
     policy_losses = []
 
-    loop = tqdm(total=(epochs), position=0)
+    loop = tqdm(total=epochs, position=0)
     episode_avg_rewards = []
 
     for e in range(epochs):
@@ -99,8 +127,16 @@ def main():
         # Create env_samples number of episode rollouts
         for j in range(env_samples):
 
-            state = env.reset()
-            state = state
+            raw_state, rew, done, _ = env.reset()
+
+            for _ in range(start_steps):
+                env.tick()
+
+            raw_state, rew, done, _ = env.step(np.zeros(94))
+
+            max_dist = raw_state[Sensors.LOCATION_SENSOR][0]
+
+            state = getObsVector(raw_state, joints)
             rollout = []
 
             # Each action in an episode
@@ -110,7 +146,26 @@ def main():
 
                 action = dist.sample().numpy()[0]
 
-                obs, reward, terminal, _ = env.step(action)
+                obs_raw, reward, terminal, _ = env.step(action_multiplier*np.append(action, np.zeros((94-54))))
+                distance = obs_raw[Sensors.LOCATION_SENSOR][0]
+
+                energy_cost = np.mean(np.abs(action)) * energy_cost_weight
+
+                if reward_type is "z_dist":
+                    reward = obs_raw[Sensors.LOCATION_SENSOR][2]
+                elif reward_type is "x_dist":
+                    reward = obs_raw[Sensors.LOCATION_SENSOR][0]
+                else:
+                    if distance > max_dist:
+                        reward = distance-max_dist
+                        max_dist = distance
+                    else:
+                        reward = 0
+
+                reward -= energy_cost
+                reward *= 10
+
+                obs = getObsVector(obs_raw, joints)
                 rewards.append(reward)
 
                 log_prob = dist.log_prob(torch.tensor(action))
@@ -124,7 +179,7 @@ def main():
                 if terminal:
                     break
 
-            compute_returns(rollout)
+            compute_returns(rollout, gamma=gamma)
             experience.append(rollout)
 
         avg_rewards = sum(rewards) / env_samples
@@ -163,6 +218,39 @@ def main():
                 val_losses.append(val_loss.detach().numpy())
                 policy_losses.append(policy_loss.detach().numpy())
 
+        if e % 10 == 0:
+            model_name = 'models/Dec10Exp/' + exp_name + str(e) + '_reward_' + str(int(avg_rewards)) + '.model'
+            torch.save(model, model_name)
+
+    if print_to_file:
+        sys.stdout = orig_stdout
+        f.close()
+
 
 if __name__ == '__main__':
-    main()
+    exp = sys.argv[1]
+
+    if exp is 0:
+        AndroidTest(exp_name="0-Control")
+    elif exp is 1:
+        AndroidTest(exp_name="1-Stand", reward_type="z_dist")
+    elif exp is 2:
+        AndroidTest(exp_name="2-HigherLR", lr=5e-4)
+    elif exp is 3:
+        AndroidTest(exp_name="3-LowerLR", lr=5e-5)
+    elif exp is 4:
+        AndroidTest(exp_name="4-MoreSamples", env_samples=50)
+    elif exp is 5:
+        AndroidTest(exp_name="5-LargerHiddenSize", hidden_size=512)
+    elif exp is 6:
+        AndroidTest(exp_name="6-SmallerHiddenSize", hidden_size=128)
+    elif exp is 7:
+        AndroidTest(exp_name="7-SmallEnergyCost", energy_cost_weight=1e-8)
+    elif exp is 8:
+        AndroidTest(exp_name="8-MedEnergyCost", energy_cost_weight=1e-6)
+    elif exp is 9:
+        AndroidTest(exp_name="9-StartStepsZero", start_steps=0)
+    elif exp is 10:
+        AndroidTest(exp_name="10-LowerGamma", gamma=0.9)
+    elif exp is 11:
+        AndroidTest(exp_name="11-JustX_Dist", reward_type="x_dist")
